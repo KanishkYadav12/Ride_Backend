@@ -13,9 +13,21 @@ const rideRoutes = require("./routes/ride.routes");
 connectToDb();
 
 // CORS Configuration
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://ride-frontend-self.vercel.app",
+];
+
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || "http://localhost:5173", // Frontend URL
-  credentials: true, // Allow cookies to be sent
+  origin: function (origin, callback) {
+    // allow requests with no origin (like Postman, curl)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
   optionsSuccessStatus: 200,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],

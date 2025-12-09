@@ -29,13 +29,11 @@ const captainSchema = new mongoose.Schema({
   socketId: {
     type: String,
   },
-
   status: {
     type: String,
     enum: ["active", "inactive"],
     default: "inactive",
   },
-
   vehicle: {
     color: {
       type: String,
@@ -65,8 +63,8 @@ const captainSchema = new mongoose.Schema({
       default: "Point",
     },
     coordinates: {
-      type: [Number], // [lng, lat]
-      index: "2dsphere",
+      type: [Number],
+      default: [0, 0], // ✅ ADD DEFAULT VALUE
     },
   },
 });
@@ -86,6 +84,7 @@ captainSchema.statics.hashPassword = async function (password) {
   return await bcrypt.hash(password, 10);
 };
 
+// ✅ Create 2dsphere index AFTER schema definition
 captainSchema.index({ location: "2dsphere" });
 
 const captainModel = mongoose.model("captain", captainSchema);

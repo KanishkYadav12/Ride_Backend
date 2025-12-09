@@ -6,6 +6,7 @@
     "start": "node server.js",
     "build": "npm install",
     "dev": "nodemon server.js",
+    "seed": "node seed.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

@@ -16,6 +16,7 @@ connectToDb();
 const allowedOrigins = [
   "http://localhost:5173",
   "https://ride-frontend-self.vercel.app",
+  "  https://ride-frontend-kanishk-yadavs-projects.vercel.app/",
 ];
 
 const corsOptions = {

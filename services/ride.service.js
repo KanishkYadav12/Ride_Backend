@@ -94,34 +94,33 @@ module.exports.confirmRide = async ({ rideId, captain }) => {
     throw new Error("Ride id is required");
   }
 
-  // ✅ Check if ride exists FIRST
-  const ride = await rideModel.findOne({ _id: rideId });
-
-  if (!ride) {
-    throw new Error("Ride not found");
-  }
-
-  // ✅ Then update it
-  await rideModel.findOneAndUpdate(
+  // ✅ Check if ride exists and is still PENDING (atomic check + update to prevent race condition)
+  const updatedRide = await rideModel.findOneAndUpdate(
     {
       _id: rideId,
+      status: "pending", // Only update if ride is still pending
     },
     {
       status: "accepted",
       captain: captain._id,
     },
+    { new: true }, // Return updated document
   );
 
-  // ✅ Return updated ride with populated fields
-  const updatedRide = await rideModel
-    .findOne({
-      _id: rideId,
-    })
+  if (!updatedRide) {
+    throw new Error(
+      "Ride not available - it may have already been accepted by another captain",
+    );
+  }
+
+  // ✅ Populate and return the accepted ride
+  const populatedRide = await rideModel
+    .findOne({ _id: updatedRide._id })
     .populate("user")
     .populate("captain")
     .select("+otp");
 
-  return updatedRide;
+  return populatedRide;
 };
 
 module.exports.startRide = async ({ rideId, otp, captain }) => {

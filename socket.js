@@ -115,4 +115,22 @@ const sendMessageToSocketId = (socketId, messageObject) => {
   }
 };
 
-module.exports = { initializeSocket, sendMessageToSocketId };
+const broadcastToAllCaptains = (messageObject) => {
+  console.log(
+    "Broadcasting to all captains:",
+    messageObject.event,
+    messageObject.data,
+  );
+
+  if (io) {
+    io.emit(messageObject.event, messageObject.data);
+  } else {
+    console.log("Socket.io not initialized.");
+  }
+};
+
+module.exports = {
+  initializeSocket,
+  sendMessageToSocketId,
+  broadcastToAllCaptains,
+};

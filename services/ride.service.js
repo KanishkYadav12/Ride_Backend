@@ -3,12 +3,14 @@ const mapService = require("./maps.service");
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
 
-async function getFare(pickup, destination) {
+async function getFare(pickup, destination, distanceTimeInput = null) {
   if (!pickup || !destination) {
     throw new Error("Pickup and destination are required");
   }
 
-  const distanceTime = await mapService.getDistanceTime(pickup, destination);
+  const distanceTime =
+    distanceTimeInput ||
+    (await mapService.getDistanceTime(pickup, destination));
 
   const baseFare = {
     auto: 30,
@@ -32,17 +34,17 @@ async function getFare(pickup, destination) {
     auto: Math.round(
       baseFare.auto +
         (distanceTime.distance.value / 1000) * perKmRate.auto +
-        (distanceTime.duration.value / 60) * perMinuteRate.auto
+        (distanceTime.duration.value / 60) * perMinuteRate.auto,
     ),
     car: Math.round(
       baseFare.car +
         (distanceTime.distance.value / 1000) * perKmRate.car +
-        (distanceTime.duration.value / 60) * perMinuteRate.car
+        (distanceTime.duration.value / 60) * perMinuteRate.car,
     ),
     motorcycle: Math.round(
       baseFare.motorcycle +
         (distanceTime.distance.value / 1000) * perKmRate.motorcycle +
-        (distanceTime.duration.value / 60) * perMinuteRate.motorcycle
+        (distanceTime.duration.value / 60) * perMinuteRate.motorcycle,
     ),
   };
 
@@ -71,7 +73,8 @@ module.exports.createRide = async ({
     throw new Error("All fields are required");
   }
 
-  const fare = await getFare(pickup, destination);
+  const distanceTime = await mapService.getDistanceTime(pickup, destination);
+  const fare = await getFare(pickup, destination, distanceTime);
 
   const ride = await rideModel.create({
     user,
@@ -79,6 +82,8 @@ module.exports.createRide = async ({
     destination,
     otp: getOtp(6),
     fare: fare[vehicleType],
+    distance: distanceTime?.distance?.value || 0,
+    duration: distanceTime?.duration?.value || 0,
   });
 
   return ride;
@@ -104,7 +109,7 @@ module.exports.confirmRide = async ({ rideId, captain }) => {
     {
       status: "accepted",
       captain: captain._id,
-    }
+    },
   );
 
   // ✅ Return updated ride with populated fields
@@ -181,8 +186,8 @@ module.exports.endRide = async ({ rideId, captain }) => {
   const updatedRide = await rideModel
     .findOneAndUpdate(
       { _id: rideId },
-      { status: "completed" },
-      { new: true } // ✅ Returns updated document
+      { status: "completed", completedAt: new Date() },
+      { new: true }, // ✅ Returns updated document
     )
     .populate("user")
     .populate("captain")

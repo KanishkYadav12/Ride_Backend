@@ -3,6 +3,7 @@ const { validationResult } = require("express-validator");
 const mapService = require("../services/maps.service");
 const { sendMessageToSocketId } = require("../socket");
 const rideModel = require("../models/ride.model");
+const captainModel = require("../models/captain.model");
 
 // controllers/ride.controller.js
 module.exports.createRide = async (req, res) => {
@@ -25,21 +26,47 @@ module.exports.createRide = async (req, res) => {
     // 2) Get pickup coordinates
     const pickupCoordinates = await mapService.getAddressCoordinate(pickup);
 
-    // 3) Get captains around
-    const captainsInRadius = await mapService.getCaptainsInTheRadius(
-      pickupCoordinates.lat,
-      pickupCoordinates.lng,
-      2
-    );
-    console.log(
-      "🚗 captainsInRadius:",
-      captainsInRadius.map((c) => ({
-        id: c._id,
-        socketId: c.socketId,
-        location: c.location,
-        status: c.status,
-      }))
-    );
+    // 3) Get captains around with a widening search radius.
+    const searchRadii = [2, 5, 10, 20];
+    let captainsInRadius = [];
+
+    for (const radius of searchRadii) {
+      captainsInRadius = await mapService.getCaptainsInTheRadius(
+        pickupCoordinates.lat,
+        pickupCoordinates.lng,
+        radius,
+      );
+
+      console.log(
+        `🚗 captainsInRadius (${radius}km):`,
+        captainsInRadius.map((c) => ({
+          id: c._id,
+          socketId: c.socketId,
+          location: c.location,
+          status: c.status,
+        })),
+      );
+
+      if (captainsInRadius.length > 0) {
+        break;
+      }
+    }
+
+    if (captainsInRadius.length === 0) {
+      captainsInRadius = await captainModel.find({
+        socketId: { $exists: true, $ne: null },
+      });
+
+      console.log(
+        "🚨 No captains found in radius, falling back to all connected captains:",
+        captainsInRadius.map((c) => ({
+          id: c._id,
+          socketId: c.socketId,
+          location: c.location,
+          status: c.status,
+        })),
+      );
+    }
 
     // 4) Prepare ride object for sending to captains
     ride.otp = "";

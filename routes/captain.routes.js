@@ -27,7 +27,7 @@ router.post(
       .isIn(["car", "motorcycle", "auto"])
       .withMessage("Invalid vehicle type"),
   ],
-  captainController.registerCaptain
+  captainController.registerCaptain,
 );
 
 router.post(
@@ -38,19 +38,25 @@ router.post(
       .isLength({ min: 6 })
       .withMessage("Password must be at least 6 characters long"),
   ],
-  captainController.loginCaptain
+  captainController.loginCaptain,
+);
+
+router.get(
+  "/dashboard-stats",
+  authMiddleware.authCaptain,
+  captainController.getDashboardStats,
 );
 
 router.get(
   "/profile",
   authMiddleware.authCaptain,
-  captainController.getCaptainProfile
+  captainController.getCaptainProfile,
 );
 
 router.get(
   "/logout",
   authMiddleware.authCaptain,
-  captainController.logoutCaptain
+  captainController.logoutCaptain,
 );
 
 module.exports = router;

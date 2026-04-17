@@ -1,25 +1,67 @@
 const axios = require("axios");
 const captainModel = require("../models/captain.model");
 
-// ✅ REPLACE: Google Geocoding API → Nominatim
+const PHOTON_SEARCH_URL = "https://photon.komoot.io/api/";
+const INDIA_BIAS = {
+  lat: 20.5937,
+  lon: 78.9629,
+};
+
+const httpClient = axios.create({
+  timeout: 7000,
+  headers: {
+    "User-Agent": "uber-clone-student-project",
+  },
+});
+
+const buildDisplayName = (properties = {}) => {
+  const addressParts = [
+    properties.name,
+    properties.housenumber && properties.street
+      ? `${properties.housenumber} ${properties.street}`
+      : properties.street,
+    properties.suburb,
+    properties.district,
+    properties.city,
+    properties.state,
+    properties.postcode,
+    properties.country,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).trim())
+    .filter((value) => value.length > 0);
+
+  return addressParts.join(", ");
+};
+
+const getIndiaFirstResults = (features = []) => {
+  const indiaResults = features.filter((feature) => {
+    const country = feature?.properties?.country?.toLowerCase();
+    return country === "india";
+  });
+
+  return indiaResults.length > 0 ? indiaResults : features;
+};
+
+// ✅ REPLACE: Google Geocoding API → Photon (India-biased, free)
 // Returns: { ltd: number, lng: number }
 module.exports.getAddressCoordinate = async (address) => {
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
-    address
-  )}&format=json&limit=1`;
+  const url = `${PHOTON_SEARCH_URL}?q=${encodeURIComponent(
+    address,
+  )}&limit=1&lang=en&lat=${INDIA_BIAS.lat}&lon=${INDIA_BIAS.lon}`;
 
   try {
-    const response = await axios.get(url, {
-      headers: {
-        "User-Agent": "uber-clone-student-project", // Required by Nominatim
-      },
-    });
+    const response = await httpClient.get(url);
 
-    if (response.data && response.data.length > 0) {
-      const location = response.data[0];
+    const features = getIndiaFirstResults(response.data?.features || []);
+
+    if (features.length > 0) {
+      const location = features[0];
+      const [lng, lat] = location.geometry.coordinates;
+
       return {
-        lat: parseFloat(location.lat),
-        lng: parseFloat(location.lon),
+        lat: parseFloat(lat),
+        lng: parseFloat(lng),
       };
     } else {
       throw new Error("Unable to fetch coordinates");
@@ -78,37 +120,30 @@ module.exports.getDistanceTime = async (origin, destination) => {
   }
 };
 
-// ✅ REPLACE: Google Places Autocomplete API → Nominatim
+// ✅ REPLACE: Google Places Autocomplete API → Photon (India-biased, free)
 // Returns: Array of address strings (exactly like Google Autocomplete)
 module.exports.getAutoCompleteSuggestions = async (input) => {
   if (!input) {
     throw new Error("query is required");
   }
 
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
-    input
-  )}&format=json&addressdetails=1&limit=5`;
+  const url = `${PHOTON_SEARCH_URL}?q=${encodeURIComponent(
+    input.trim(),
+  )}&limit=8&lang=en&lat=${INDIA_BIAS.lat}&lon=${INDIA_BIAS.lon}`;
 
   try {
-    const response = await axios.get(url, {
-      headers: {
-        "User-Agent": "uber-clone-student-project", // Required by Nominatim
-      },
-    });
+    const response = await httpClient.get(url);
+    const features = getIndiaFirstResults(response.data?.features || []);
 
-    console.log("AUTOCOMPLETE RAW RESPONSE:", response.data);
-
-    if (response.data && response.data.length > 0) {
-      // Return array of strings just like Google Places Autocomplete
-      return response.data
-        .map((place) => place.display_name)
-        .filter((value) => value);
+    if (features.length > 0) {
+      return features
+        .map((feature) => buildDisplayName(feature.properties))
+        .filter((value) => value && value.length > 0);
     } else {
-      console.error("AUTOCOMPLETE: No results found");
       throw new Error("Unable to fetch suggestions");
     }
   } catch (err) {
-    console.error("AUTOCOMPLETE ERROR:", err);
+    console.error("AUTOCOMPLETE ERROR:", err.message);
     throw err;
   }
 };
@@ -118,7 +153,6 @@ module.exports.getCaptainsInTheRadius = async (lat, lng, radiusInKm) => {
   const radiusInMeters = radiusInKm * 1000;
 
   const captains = await captainModel.find({
-    
     location: {
       $near: {
         $geometry: {

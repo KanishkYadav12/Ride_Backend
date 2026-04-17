@@ -12,9 +12,41 @@ function initializeSocket(server) {
     "https://ride-frontend-kanishk-yadavs-projects.vercel.app",
   ];
 
+  const normalizeOrigin = (origin) => origin?.replace(/\/+$/, "").toLowerCase();
+
+  const isVercelPreview = (origin) => {
+    if (!origin) return false;
+
+    try {
+      const hostname = new URL(origin).hostname.toLowerCase();
+      return hostname.endsWith(".vercel.app");
+    } catch {
+      return false;
+    }
+  };
+
+  const isAllowedOrigin = (origin) => {
+    const normalizedOrigin = normalizeOrigin(origin);
+
+    return (
+      !normalizedOrigin ||
+      allowedOrigins.some(
+        (allowed) => normalizeOrigin(allowed) === normalizedOrigin,
+      ) ||
+      isVercelPreview(normalizedOrigin)
+    );
+  };
+
   io = socketIo(server, {
     cors: {
-      origin: allowedOrigins,
+      origin: (origin, callback) => {
+        if (isAllowedOrigin(origin)) {
+          callback(null, true);
+        } else {
+          console.warn(`Blocked socket by CORS: ${origin}`);
+          callback(new Error("Not allowed by CORS"));
+        }
+      },
       methods: ["GET", "POST"],
     },
   });

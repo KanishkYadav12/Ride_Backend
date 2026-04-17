@@ -5,9 +5,16 @@ const captainModel = require("./models/captain.model");
 let io;
 
 function initializeSocket(server) {
+  const allowedOrigins = [
+    "http://localhost:5173",
+    "https://ride-handling.vercel.app",
+    "https://ride-frontend-self.vercel.app",
+    "https://ride-frontend-kanishk-yadavs-projects.vercel.app",
+  ];
+
   io = socketIo(server, {
     cors: {
-      origin: "*",
+      origin: allowedOrigins,
       methods: ["GET", "POST"],
     },
   });
@@ -52,7 +59,7 @@ function initializeSocket(server) {
         }
 
         console.log(
-          `Captain ${userId} location updated: ${location.lat}, ${location.lng}`
+          `Captain ${userId} location updated: ${location.lat}, ${location.lng}`,
         );
       } catch (error) {
         console.error("Error updating captain location:", error);

@@ -66,6 +66,41 @@ const setCachedCoordinates = (key, value) => {
   });
 };
 
+const haversineDistanceMeters = (origin, destination) => {
+  const toRadians = (degrees) => (degrees * Math.PI) / 180;
+  const earthRadiusMeters = 6371000;
+
+  const dLat = toRadians(destination.lat - origin.lat);
+  const dLng = toRadians(destination.lng - origin.lng);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(origin.lat)) *
+      Math.cos(toRadians(destination.lat)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadiusMeters * c;
+};
+
+const buildDistanceDurationResponse = (
+  distanceMeters,
+  durationSeconds,
+  status,
+) => ({
+  distance: {
+    text: `${(distanceMeters / 1000).toFixed(1)} km`,
+    value: Math.round(distanceMeters),
+  },
+  duration: {
+    text: `${Math.max(1, Math.round(durationSeconds / 60))} mins`,
+    value: Math.round(durationSeconds),
+  },
+  status,
+});
+
 const withRetries = async (fn, retries = 2) => {
   let lastError;
 
@@ -225,37 +260,52 @@ module.exports.getDistanceTime = async (origin, destination) => {
       module.exports.getAddressCoordinate(destination),
     ]);
 
-    const url = `https://router.project-osrm.org/route/v1/driving/${originCoords.lng},${originCoords.lat};${destCoords.lng},${destCoords.lat}?overview=false`;
-    const response = await withRetries(() =>
-      httpClient.get(url, {
-        timeout: 8000,
-      }),
-    );
+    try {
+      const url = `https://router.project-osrm.org/route/v1/driving/${originCoords.lng},${originCoords.lat};${destCoords.lng},${destCoords.lat}?overview=false`;
+      const response = await withRetries(() =>
+        httpClient.get(url, {
+          timeout: 8000,
+        }),
+      );
 
-    if (
-      response.data.code === "Ok" &&
-      response.data.routes &&
-      response.data.routes.length > 0
-    ) {
-      const route = response.data.routes[0];
+      if (
+        response.data.code === "Ok" &&
+        response.data.routes &&
+        response.data.routes.length > 0
+      ) {
+        const route = response.data.routes[0];
+        return buildDistanceDurationResponse(
+          route.distance,
+          route.duration,
+          "OK",
+        );
+      }
 
-      // ✅ RETURN IN EXACT GOOGLE FORMAT: response.data.rows[0].elements[0]
-      // This matches what your frontend expects from Google Distance Matrix
-      return {
-        distance: {
-          text: `${(route.distance / 1000).toFixed(1)} km`,
-          value: Math.round(route.distance), // meters
-        },
-        duration: {
-          text: `${Math.round(route.duration / 60)} mins`,
-          value: Math.round(route.duration), // seconds
-        },
-        status: "OK",
-      };
-    } else {
-      const error = new Error("No routes found for selected locations");
-      error.isMapLookupIssue = true;
-      throw error;
+      throw new Error("No routes found for selected locations");
+    } catch (routeError) {
+      // Fallback: estimate route if routing provider is down but coordinates are available.
+      const crowDistanceMeters = haversineDistanceMeters(
+        originCoords,
+        destCoords,
+      );
+      const estimatedRoadDistanceMeters = Math.max(
+        crowDistanceMeters * 1.35,
+        1200,
+      );
+      const cityAverageSpeedMetersPerSec = 8.5;
+      const estimatedDurationSeconds =
+        estimatedRoadDistanceMeters / cityAverageSpeedMetersPerSec;
+
+      console.warn(
+        "OSRM route failed, using fallback estimate:",
+        routeError.message,
+      );
+
+      return buildDistanceDurationResponse(
+        estimatedRoadDistanceMeters,
+        estimatedDurationSeconds,
+        "ESTIMATED",
+      );
     }
   } catch (err) {
     err.isMapLookupIssue = true;

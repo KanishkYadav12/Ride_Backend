@@ -7,7 +7,7 @@ const {
   broadcastToCaptainsByVehicleType,
 } = require("../socket");
 const rideModel = require("../models/ride.model");
-const captainModel = require("../models/captain.model");
+const userModel = require("../models/user.model");
 
 // controllers/ride.controller.js
 module.exports.createRide = async (req, res) => {
@@ -99,10 +99,21 @@ module.exports.confirmRide = async (req, res) => {
       captain: req.captain,
     });
 
-    sendMessageToSocketId(ride.user.socketId, {
-      event: "ride-confirmed",
-      data: ride,
-    });
+    const freshUser = await userModel
+      .findById(ride.user?._id)
+      .select("socketId");
+    const userSocketId = freshUser?.socketId || ride.user?.socketId;
+
+    if (userSocketId) {
+      sendMessageToSocketId(userSocketId, {
+        event: "ride-confirmed",
+        data: ride,
+      });
+    } else {
+      console.warn(
+        `Could not emit ride-confirmed for ride ${ride._id}: user socketId missing`,
+      );
+    }
 
     await broadcastToCaptainsByVehicleType(
       {
@@ -120,6 +131,32 @@ module.exports.confirmRide = async (req, res) => {
   } catch (err) {
     console.log(err);
     return res.status(500).json({ message: err.message });
+  }
+};
+
+module.exports.getRideById = async (req, res) => {
+  const { rideId } = req.params;
+
+  try {
+    const ride = await rideModel
+      .findById(rideId)
+      .populate("user")
+      .populate("captain")
+      .select("+otp");
+
+    if (!ride) {
+      return res.status(404).json({ message: "Ride not found" });
+    }
+
+    if (String(ride.user?._id) !== String(req.user?._id)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    return res.status(200).json(ride);
+  } catch (err) {
+    return res
+      .status(500)
+      .json({ message: err.message || "Failed to fetch ride" });
   }
 };
 

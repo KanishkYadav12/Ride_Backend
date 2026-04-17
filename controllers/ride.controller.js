@@ -1,7 +1,11 @@
 const rideService = require("../services/ride.service");
 const { validationResult } = require("express-validator");
 const mapService = require("../services/maps.service");
-const { sendMessageToSocketId, broadcastToAllCaptains } = require("../socket");
+const {
+  sendMessageToSocketId,
+  broadcastToAllCaptains,
+  broadcastToCaptainsByVehicleType,
+} = require("../socket");
 const rideModel = require("../models/ride.model");
 const captainModel = require("../models/captain.model");
 
@@ -32,12 +36,18 @@ module.exports.createRide = async (req, res) => {
 
     // 3) ✅ Broadcast to ALL online captains so they all see the ride popup
     // Whoever confirms first gets the ride
-    console.log("📢 Broadcasting new-ride to ALL online captains");
+    console.log(
+      "📢 Broadcasting new-ride to captains with vehicle type:",
+      rideWithUser.vehicleType,
+    );
 
-    broadcastToAllCaptains({
-      event: "new-ride",
-      data: rideWithUser,
-    });
+    await broadcastToCaptainsByVehicleType(
+      {
+        event: "new-ride",
+        data: rideWithUser,
+      },
+      rideWithUser.vehicleType,
+    );
 
     // 6) ✅ Only one response to client
     return res.status(201).json(ride);
@@ -60,11 +70,18 @@ module.exports.getFare = async (req, res) => {
   } catch (err) {
     const message = err?.message || "Failed to calculate fare";
     const isMapLookupIssue =
+      Boolean(err?.isMapLookupIssue) ||
       message.includes("Unable to fetch coordinates") ||
       message.includes("No routes found") ||
-      message.includes("Origin and destination are required");
+      message.includes("Origin and destination are required") ||
+      message.includes("Address is required");
 
-    return res.status(isMapLookupIssue ? 502 : 500).json({ message });
+    return res.status(isMapLookupIssue ? 502 : 500).json({
+      message: isMapLookupIssue
+        ? message ||
+          "Location services are temporarily busy. Please select from suggestions and retry."
+        : "Failed to calculate fare",
+    });
   }
 };
 
@@ -87,14 +104,17 @@ module.exports.confirmRide = async (req, res) => {
       data: ride,
     });
 
-    broadcastToAllCaptains({
-      event: "ride-accepted",
-      data: {
-        rideId: ride._id,
-        captainId: req.captain._id,
-        captainName: `${req.captain.fullname?.firstname} ${req.captain.fullname?.lastname}`,
+    await broadcastToCaptainsByVehicleType(
+      {
+        event: "ride-accepted",
+        data: {
+          rideId: ride._id,
+          captainId: req.captain._id,
+          captainName: `${req.captain.fullname?.firstname} ${req.captain.fullname?.lastname}`,
+        },
       },
-    });
+      ride.vehicleType,
+    );
 
     return res.status(200).json(ride);
   } catch (err) {

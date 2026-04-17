@@ -2,17 +2,137 @@ const axios = require("axios");
 const captainModel = require("../models/captain.model");
 
 const PHOTON_SEARCH_URL = "https://photon.komoot.io/api/";
+const NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search";
 const INDIA_BIAS = {
   lat: 20.5937,
   lon: 78.9629,
 };
+const GEO_CACHE_TTL_MS = 30 * 60 * 1000;
+const GEO_CACHE_MAX_ENTRIES = 500;
+const coordinateCache = new Map();
 
 const httpClient = axios.create({
   timeout: 7000,
   headers: {
     "User-Agent": "uber-clone-student-project",
+    Accept: "application/json",
   },
 });
+
+const normalizeQuery = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/,{2,}/g, ",")
+    .replace(/^,|,$/g, "");
+
+const getQueryVariants = (address) => {
+  const normalized = normalizeQuery(address);
+  const shortened = normalized
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 5)
+    .join(", ");
+
+  return [...new Set([address, normalized, shortened].filter(Boolean))];
+};
+
+const getCachedCoordinates = (key) => {
+  const entry = coordinateCache.get(key);
+
+  if (!entry) return null;
+
+  if (Date.now() - entry.createdAt > GEO_CACHE_TTL_MS) {
+    coordinateCache.delete(key);
+    return null;
+  }
+
+  return entry.value;
+};
+
+const setCachedCoordinates = (key, value) => {
+  if (coordinateCache.size >= GEO_CACHE_MAX_ENTRIES) {
+    const oldestKey = coordinateCache.keys().next().value;
+    if (oldestKey) {
+      coordinateCache.delete(oldestKey);
+    }
+  }
+
+  coordinateCache.set(key, {
+    value,
+    createdAt: Date.now(),
+  });
+};
+
+const withRetries = async (fn, retries = 2) => {
+  let lastError;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      const status = error?.response?.status;
+      const canRetry =
+        !status || status >= 500 || error?.code === "ECONNABORTED";
+
+      if (!canRetry || attempt === retries) {
+        break;
+      }
+    }
+  }
+
+  throw lastError;
+};
+
+const getPhotonCoordinates = async (query) => {
+  const url = `${PHOTON_SEARCH_URL}?q=${encodeURIComponent(
+    query,
+  )}&limit=5&lang=en&lat=${INDIA_BIAS.lat}&lon=${INDIA_BIAS.lon}`;
+
+  const response = await withRetries(() => httpClient.get(url));
+  const features = getIndiaFirstResults(response.data?.features || []);
+
+  if (!features.length) {
+    return null;
+  }
+
+  const [lng, lat] = features[0]?.geometry?.coordinates || [];
+
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    return {
+      lat: Number(lat),
+      lng: Number(lng),
+    };
+  }
+
+  return null;
+};
+
+const getNominatimCoordinates = async (query) => {
+  const url = `${NOMINATIM_SEARCH_URL}?q=${encodeURIComponent(
+    query,
+  )}&format=jsonv2&limit=1&countrycodes=in`;
+
+  const response = await withRetries(() => httpClient.get(url));
+  const row = Array.isArray(response.data) ? response.data[0] : null;
+
+  if (!row) {
+    return null;
+  }
+
+  const lat = Number(row.lat);
+  const lng = Number(row.lon);
+
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    return { lat, lng };
+  }
+
+  return null;
+};
 
 const buildDisplayName = (properties = {}) => {
   const addressParts = [
@@ -46,28 +166,46 @@ const getIndiaFirstResults = (features = []) => {
 // ✅ REPLACE: Google Geocoding API → Photon (India-biased, free)
 // Returns: { ltd: number, lng: number }
 module.exports.getAddressCoordinate = async (address) => {
-  const url = `${PHOTON_SEARCH_URL}?q=${encodeURIComponent(
-    address,
-  )}&limit=1&lang=en&lat=${INDIA_BIAS.lat}&lon=${INDIA_BIAS.lon}`;
+  if (!address || !String(address).trim()) {
+    const error = new Error("Address is required");
+    error.isMapLookupIssue = true;
+    throw error;
+  }
+
+  const cacheKey = normalizeQuery(address).toLowerCase();
+  const cachedValue = getCachedCoordinates(cacheKey);
+
+  if (cachedValue) {
+    return cachedValue;
+  }
+
+  const queryVariants = getQueryVariants(address);
 
   try {
-    const response = await httpClient.get(url);
-
-    const features = getIndiaFirstResults(response.data?.features || []);
-
-    if (features.length > 0) {
-      const location = features[0];
-      const [lng, lat] = location.geometry.coordinates;
-
-      return {
-        lat: parseFloat(lat),
-        lng: parseFloat(lng),
-      };
-    } else {
-      throw new Error("Unable to fetch coordinates");
+    for (const query of queryVariants) {
+      const photonCoordinates = await getPhotonCoordinates(query);
+      if (photonCoordinates) {
+        setCachedCoordinates(cacheKey, photonCoordinates);
+        return photonCoordinates;
+      }
     }
+
+    for (const query of queryVariants) {
+      const nominatimCoordinates = await getNominatimCoordinates(query);
+      if (nominatimCoordinates) {
+        setCachedCoordinates(cacheKey, nominatimCoordinates);
+        return nominatimCoordinates;
+      }
+    }
+
+    const error = new Error(
+      "Unable to fetch coordinates. Please select a location from suggestions.",
+    );
+    error.isMapLookupIssue = true;
+    throw error;
   } catch (error) {
-    console.error(error);
+    error.isMapLookupIssue = true;
+    console.error("ADDRESS LOOKUP ERROR:", error.message);
     throw error;
   }
 };
@@ -76,20 +214,23 @@ module.exports.getAddressCoordinate = async (address) => {
 // Returns EXACT Google Distance Matrix format for frontend compatibility
 module.exports.getDistanceTime = async (origin, destination) => {
   if (!origin || !destination) {
-    throw new Error("Origin and destination are required");
+    const error = new Error("Origin and destination are required");
+    error.isMapLookupIssue = true;
+    throw error;
   }
 
   try {
-    // Step 1: Convert origin address to coordinates
-    const originCoords = await module.exports.getAddressCoordinate(origin);
+    const [originCoords, destCoords] = await Promise.all([
+      module.exports.getAddressCoordinate(origin),
+      module.exports.getAddressCoordinate(destination),
+    ]);
 
-    // Step 2: Convert destination address to coordinates
-    const destCoords = await module.exports.getAddressCoordinate(destination);
-
-    // Step 3: Get route from OSRM
     const url = `https://router.project-osrm.org/route/v1/driving/${originCoords.lng},${originCoords.lat};${destCoords.lng},${destCoords.lat}?overview=false`;
-    // ✅ Changed all 'ltd' to 'lat'
-    const response = await axios.get(url);
+    const response = await withRetries(() =>
+      httpClient.get(url, {
+        timeout: 8000,
+      }),
+    );
 
     if (
       response.data.code === "Ok" &&
@@ -112,10 +253,13 @@ module.exports.getDistanceTime = async (origin, destination) => {
         status: "OK",
       };
     } else {
-      throw new Error("No routes found");
+      const error = new Error("No routes found for selected locations");
+      error.isMapLookupIssue = true;
+      throw error;
     }
   } catch (err) {
-    console.error(err);
+    err.isMapLookupIssue = true;
+    console.error("DISTANCE ROUTE ERROR:", err.message);
     throw err;
   }
 };

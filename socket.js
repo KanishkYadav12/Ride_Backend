@@ -116,11 +116,7 @@ const sendMessageToSocketId = (socketId, messageObject) => {
 };
 
 const broadcastToAllCaptains = (messageObject) => {
-  console.log(
-    "Broadcasting to all captains:",
-    messageObject.event,
-    messageObject.data,
-  );
+  console.log("Broadcasting to all captains:", messageObject.event);
 
   if (io) {
     io.emit(messageObject.event, messageObject.data);
@@ -129,8 +125,36 @@ const broadcastToAllCaptains = (messageObject) => {
   }
 };
 
+const broadcastToCaptainsByVehicleType = async (messageObject, vehicleType) => {
+  console.log(
+    "Broadcasting to captains by vehicle type:",
+    vehicleType,
+    messageObject.event,
+  );
+
+  if (!io) {
+    console.log("Socket.io not initialized.");
+    return;
+  }
+
+  if (!vehicleType) {
+    broadcastToAllCaptains(messageObject);
+    return;
+  }
+
+  const captains = await captainModel.find({
+    socketId: { $exists: true, $ne: null },
+    "vehicle.vehicleType": vehicleType,
+  });
+
+  captains.forEach((captain) => {
+    io.to(captain.socketId).emit(messageObject.event, messageObject.data);
+  });
+};
+
 module.exports = {
   initializeSocket,
   sendMessageToSocketId,
   broadcastToAllCaptains,
+  broadcastToCaptainsByVehicleType,
 };
